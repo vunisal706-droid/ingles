@@ -182,6 +182,7 @@ h2{margin:0;font-size:1.5rem}
     <div class="pill">⭐ <span class="starCount">0</span></div>
     <button class="btn" id="shopBtn">🛍️ Tienda</button>
     <button class="btn" id="soundBtn" aria-label="Sonido">🔊</button>
+    <button class="btn" id="voiceBtn">🗣️ Voz</button>
     <button class="btn" id="fsBtn" aria-label="Pantalla completa">⛶</button>
   </div>
 </section>
@@ -285,7 +286,7 @@ const rand=a=>a[Math.floor(Math.random()*a.length)];
 const shuffle=a=>{a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;};
 function parseWords(str){return str.split('|').map(s=>{s=s.trim();const i=s.indexOf(' ');const p=s.slice(0,i),w=s.slice(i+1).trim();
   if(p[0]==='#')return{type:'color',pic:p,w};if(p[0]==='@')return{type:'text',pic:p.slice(1),w};return{type:'emoji',pic:p,w};});}
-function defS(){return{level:'c12',stars:0,hats:['none'],hat:'none',crowns:{},sound:true};}
+function defS(){return{voice:null,level:'c12',stars:0,hats:['none'],hat:'none',crowns:{},sound:true};}
 let S=defS();try{const d=JSON.parse(localStorage.getItem('capEnglish1'));if(d)S=Object.assign(defS(),d);}catch(e){}
 function save(){try{localStorage.setItem('capEnglish1',JSON.stringify(S));}catch(e){}}
 const LV=()=>LEVELS[S.level];
@@ -294,20 +295,25 @@ const MD=()=>MODES[mode];
 const WD=()=>MD().worlds[worldIdx];
 
 /* ================== VOZ Y SONIDO ================== */
-let voice=null;
-function pickVoice(){if(!('speechSynthesis' in window))return;const vs=speechSynthesis.getVoices();
- voice=vs.find(v=>/en[-_]GB/i.test(v.lang)&&/Google|Natural|Libby|Sonia|Kate|Serena|Female/i.test(v.name))||vs.find(v=>/en[-_]GB/i.test(v.lang))||vs.find(v=>/^en/i.test(v.lang))||null;}
+let voice=null;const badVoices=new Set();
+function enVoices(){return 'speechSynthesis' in window?speechSynthesis.getVoices().filter(v=>/^en/i.test(v.lang)):[];}
+function pickVoice(){if(!('speechSynthesis' in window))return;const en=enVoices().filter(v=>!badVoices.has(v.name)),gb=en.filter(v=>/en[-_]GB/i.test(v.lang));
+ const good=v=>!/espeak/i.test(v.name),loc=a=>a.filter(v=>v.localService&&good(v));
+ voice=(S.voice&&en.find(v=>v.name===S.voice))||loc(gb)[0]||gb.find(good)||loc(en)[0]||en.find(good)||gb[0]||en[0]||null;}
 if('speechSynthesis' in window){pickVoice();speechSynthesis.onvoiceschanged=pickVoice;}
 const ttsOK=()=>!!voice;
 let curU=null;
 function say(t,rate,onend){if(!S.sound||!('speechSynthesis' in window)){onend&&setTimeout(onend,600);return;}
- const ss=speechSynthesis,busy=ss.speaking||ss.pending;ss.cancel();
- const u=new SpeechSynthesisUtterance(t);u.lang='en-GB';if(voice)u.voice=voice;u.rate=rate||LV().rate;u.pitch=1.05;u.volume=1;
- let started=false,done=false;const fin=()=>{if(done)return;done=true;onend&&onend();};
- u.onstart=()=>{started=true;};u.onend=fin;u.onerror=fin;curU=u;
- setTimeout(()=>{if(curU!==u)return;ss.resume();ss.speak(u);},busy?180:40);
- setTimeout(()=>{if(curU===u&&!started&&!done){ss.cancel();ss.resume();ss.speak(u);}},1600);
- if(onend)setTimeout(()=>{if(!started)fin();},6000);}
+ const ss=speechSynthesis,busy=ss.speaking||ss.pending;ss.cancel();if(!voice)pickVoice();
+ const token={};curU=token;let done=false;const fin=()=>{if(done)return;done=true;onend&&onend();};
+ const attempt=n=>{if(curU!==token||done)return;const u=new SpeechSynthesisUtterance(t),v=voice;u.lang=v?v.lang:'en-GB';if(v)u.voice=v;u.rate=rate||LV().rate;u.pitch=1.05;u.volume=1;let started=false;
+  // si la voz falla (p. ej. voz online sin red), se descarta y se prueba otra
+  const fail=()=>{if(curU!==token||done)return;if(v)badVoices.add(v.name);pickVoice();if(n<2){ss.cancel();setTimeout(()=>attempt(n+1),150);}else fin();};
+  u.onstart=()=>{started=true;};u.onend=()=>{if(curU===token)fin();};u.onerror=e=>{if(/interrupted|canceled/.test((e&&e.error)||''))return;fail();};
+  ss.resume();ss.speak(u);
+  setTimeout(()=>{if(curU===token&&!started&&!done&&!ss.speaking)fail();},2500);
+  setTimeout(()=>{if(curU===token&&started&&!done){ss.cancel();fin();}},4500+t.length*180);};
+ setTimeout(()=>attempt(0),busy?180:40);}
 // desbloquear la voz con el primer toque (Chrome / pizarras)
 let ttsWarm=false;addEventListener('pointerdown',()=>{if(ttsWarm||!('speechSynthesis' in window))return;ttsWarm=true;const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u);},{capture:true});
 let AC=null;
@@ -775,6 +781,13 @@ function openShop(){openModal(`<h2>🛍️ Tienda de Capitulín</h2><p>⭐ ${S.s
  $('#resetB').onclick=()=>{openModal(`<h2>¿Borrar todo?</h2><p>Se perderán estrellas, coronas y gorros.</p><div class="row"><button class="btn" id="rNo">Cancelar</button><button class="btn pri" id="rYes">Borrar</button></div>`);
   $('#rNo').onclick=openShop;$('#rYes').onclick=()=>{const lv=S.level;S=defS();S.level=lv;save();closeModal();goHome();};};}
 $('#shopBtn').onclick=openShop;
+$('#voiceBtn').onclick=openVoices;
+function openVoices(){pickVoice();const vs=enVoices();
+ openModal(`<h2>🗣️ Voz en inglés</h2><p style="font-size:1rem;color:var(--muted)">Si la voz se corta, elige otra y pulsa ▶ para probarla. Las de Google necesitan internet.</p>
+  <div class="rank" style="font-size:1.05rem;text-align:left">${vs.length?vs.map((v,i)=>`<label style="display:flex;gap:8px;align-items:center"><input type="radio" name="vv" value="${i}" ${voice&&voice.name===v.name?'checked':''}> ${esc(v.name)} <small>(${v.lang}${v.localService?', sin internet':''})</small></label>`).join(''):'⚠️ Este navegador no tiene voces en inglés. Prueba con Chrome o Edge.'}</div>
+  <div class="row"><button class="btn" id="vAuto">Automática</button><button class="btn" id="vTest">▶ Probar</button><button class="btn pri" id="vX">Cerrar</button></div>`);
+ document.querySelectorAll('[name=vv]').forEach(r=>r.onchange=()=>{const v=vs[+r.value];S.voice=v.name;badVoices.delete(v.name);save();pickVoice();say('Hello! I am Capitulín.');});
+ $('#vAuto').onclick=()=>{S.voice=null;badVoices.clear();save();pickVoice();openVoices();};$('#vTest').onclick=()=>say('Hello! I am Capitulín. Let\'s play!');$('#vX').onclick=closeModal;}
 $('#soundBtn').onclick=()=>{S.sound=!S.sound;save();$('#soundBtn').textContent=S.sound?'🔊':'🔇';};
 $('#fsBtn').onclick=()=>{try{document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();}catch(e){}};
 
